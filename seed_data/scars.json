@@ -1,0 +1,98 @@
+[
+  {
+    "id": "scar-001",
+    "source": "github:abetlen/llama-cpp-python#216",
+    "trigger": "loading a quantized ggml-model-q4_0 file after upgrading llama-cpp-python",
+    "action": "downgrade llama-cpp-python version",
+    "outcome": "failure",
+    "root_cause": "llama.cpp changed the quantization format version; the Python wrapper's bundled llama.cpp was out of sync",
+    "real_fix": "update the wrapper/submodule to match the new quantization format",
+    "severity": "medium",
+    "confidence": 0.9,
+    "status": "active"
+  },
+  {
+    "id": "scar-002",
+    "source": "github:abetlen/llama-cpp-python#686",
+    "trigger": "TODO - fill in exact trigger once confirmed",
+    "action": "reformat --tensor_split argument (tried spaces, quotes, different separators)",
+    "outcome": "failure",
+    "root_cause": "TODO - open the thread, confirm the Pydantic 2.0 migration explanation before trusting it",
+    "real_fix": "TODO",
+    "severity": "low",
+    "confidence": 0.5,
+    "status": "active"
+  },
+  {
+    "id": "scar-003",
+    "source": "github:huggingface/peft#2171",
+    "trigger": "saving and reloading a LoRA adapter for sequence classification (LoRA + DeBERTa)",
+    "action": "switch to PeftModelForSequenceClassification",
+    "outcome": "failure",
+    "root_cause": "TODO - open the thread, root cause wasn't visible in the issue body alone",
+    "real_fix": "TODO",
+    "severity": "medium",
+    "confidence": 0.5,
+    "status": "active"
+  },
+  {
+    "id": "scar-004",
+    "source": "self:adtc-2026",
+    "trigger": "fine-tuning Qwen3.5-2B for Yoruba support on Colab T4",
+    "action": "proceed with Unsloth QLoRA fine-tuning as planned",
+    "outcome": "failure",
+    "root_cause": "confirmed Unsloth/T4 dtype bug — BFloat16 != Half, incompatible with T4 hardware",
+    "real_fix": "abandoned fine-tuning path entirely; switched to deterministic post-processing (16-term Yoruba glossary regex)",
+    "severity": "high",
+    "confidence": 0.95,
+    "status": "active"
+  },
+  {
+    "id": "scar-005",
+    "source": "self:adtc-2026",
+    "trigger": "naming a helper script for a Python project",
+    "action": "name the script inspect.py",
+    "outcome": "failure",
+    "root_cause": "collides with Python's own standard library inspect module, causing import errors",
+    "real_fix": "never name embedded scripts after stdlib module names",
+    "severity": "low",
+    "confidence": 1.0,
+    "status": "active"
+  },
+  {
+    "id": "scar-006",
+    "source": "self:datahub-project",
+    "trigger": "adding an env: block under a GitHub Actions step",
+    "action": "indent env: with default/auto-formatted spacing",
+    "outcome": "failure",
+    "root_cause": "GitHub Actions requires exactly 8 spaces for env: under a step; wrong indentation fails silently with no clear error",
+    "real_fix": "match the exact 8-space indentation convention every time",
+    "severity": "medium",
+    "confidence": 0.9,
+    "status": "active"
+  },
+  {
+    "id": "scar-007",
+    "source": "self:datahub-project",
+    "trigger": "calling the get_lineage MCP tool",
+    "action": "pass direction and hops as parameter names",
+    "outcome": "failure",
+    "root_cause": "the tool actually expects upstream (bool) and max_hops (int), not direction/hops",
+    "real_fix": "always check the tool's actual parameter schema before assuming naming conventions",
+    "severity": "low",
+    "confidence": 0.85,
+    "status": "active"
+  },
+  {
+    "id": "scar-008",
+    "source": "self:datahub-project",
+    "trigger": "setting a branches: filter in a GitHub Actions workflow",
+    "action": "assume the target branch is named main",
+    "outcome": "failure",
+    "root_cause": "the actual repo used duckdb as its branch name, not main, so the filter silently never triggered",
+    "real_fix": "confirm actual branch name in the specific repo before writing the filter",
+    "severity": "medium",
+    "confidence": 0.85,
+    "status": "active"
+  }
+]
