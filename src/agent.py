@@ -67,7 +67,7 @@ def handle_situation(situation):
     response = client.chat.completions.create(
         model=MODEL,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
+        temperature=0,
     )
     reasoning = response.choices[0].message.content
 
