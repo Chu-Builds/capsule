@@ -8,9 +8,6 @@ import re
 
 from sibyl_memory_client import MemoryClient
 
-# Swappable via env var so the deletion-test demo can point at a throwaway
-# db instead of ever touching the real one (file-move-based swapping proved
-# unreliable on this system - real data got lost once already).
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "memory", "capsule.db")
 DB_PATH = os.environ.get("CAPSULE_DB_PATH", DEFAULT_DB_PATH)
 
@@ -25,11 +22,15 @@ STOPWORDS = {
 
 
 def extract_keywords(text):
+    """search_entities() ANDs every token together by default (confirmed
+    from source: _sanitize_fts5_query, v0.4.2+). There's no OR mode. So we
+    search one keyword at a time and merge results in Python instead."""
     words = re.findall(r"[a-zA-Z0-9_]+", text.lower())
     return [w for w in words if w not in STOPWORDS and len(w) > 2]
 
 
 def load_seed_scars(path="seed_data/scars.json"):
+    """One-time load: pushes every scar in the JSON file into Sibyl as an entity."""
     with open(path) as f:
         scars = json.load(f)
     for scar in scars:
@@ -42,6 +43,9 @@ def get_scar(scar_id):
 
 
 def find_relevant_scars(query_text):
+    """Search across all stored scars for ones matching the current situation.
+    Runs one FTS5 query per keyword and merges/dedupes in Python, since the
+    SDK's search_entities has no built-in OR/any-match mode."""
     keywords = extract_keywords(query_text)
     seen = {}
     for kw in keywords:
@@ -52,6 +56,7 @@ def find_relevant_scars(query_text):
 
 
 def record_decision(trigger, action_chosen, blocked_scar_id=None):
+    """Write every decision to the COLD journal, always, regardless of outcome."""
     memory.write_event(acted=[{
         "trigger": trigger,
         "action_chosen": action_chosen,
@@ -59,19 +64,10 @@ def record_decision(trigger, action_chosen, blocked_scar_id=None):
     }])
 
 
-def bump_scar_evidence(scar_id, worked_anyway: bool):
-    scar = get_scar(scar_id)
-    body = scar["body"]
-    if worked_anyway:
-        body["evidence_against"] = body.get("evidence_against", 0) + 1
-        if body["evidence_against"] >= 2:
-            body["status"] = "overridden"
-    else:
-        body["evidence_for"] = body.get("evidence_for", 0) + 1
-    memory.set_entity("scar", scar_id, body)
-
-
 def _next_id(category):
+    """Derive the next id by scanning existing entities directly, instead of
+    trusting a separate counter that can silently drift out of sync (this
+    already bit us once - a stale counter collided with seeded scar-001)."""
     existing = memory.search_entities(category, category=category, limit=1000)
     max_n = 0
     for e in existing:
@@ -87,6 +83,7 @@ def _next_id(category):
 
 def create_scar(trigger, action, root_cause, real_fix, severity="medium",
                  confidence=0.6, source="learned:live"):
+    """A failed action becomes a brand new scar, created at runtime."""
     scar_id = _next_id("scar")
     body = {
         "id": scar_id,
@@ -106,7 +103,38 @@ def create_scar(trigger, action, root_cause, real_fix, severity="medium",
     return scar_id
 
 
-def create_ability(trigger, action, note="", confidence=0.6, source="learned:live"):
+def _find_matching_ability(trigger, action_taken):
+    """Check if an ability already exists for a similar action, so success
+    reinforces existing competence instead of spawning duplicates."""
+    keywords = extract_keywords(action_taken)
+    seen = {}
+    for kw in keywords:
+        for r in memory.search_entities(kw, category="ability"):
+            seen[r["name"]] = r
+    for r in seen.values():
+        existing_kw = set(extract_keywords(r["body"]["action"]))
+        action_kw = set(extract_keywords(action_taken))
+        if existing_kw and len(action_kw & existing_kw) / len(existing_kw) >= 0.5:
+            return r["body"]
+    return None
+
+
+def reinforce_ability(ability_id):
+    """Bumps confidence and evidence on an existing ability instead of
+    creating a duplicate record for the same demonstrated competence."""
+    ability = memory.get_entity("ability", ability_id)
+    body = ability["body"]
+    body["evidence_for"] = body.get("evidence_for", 0) + 1
+    body["confidence"] = min(0.99, body.get("confidence", 0.6) + 0.1)
+    memory.set_entity("ability", ability_id, body)
+    return body
+
+
+def create_ability(trigger, action, note="", confidence=0.6, source="learned:live",
+                     supersedes_scar=None):
+    """A successful action, not previously scarred, becomes a new ability.
+    If supersedes_scar is set, this ability is explicitly linked to the scar
+    it contradicted, so the lifecycle is visible in the data itself."""
     ability_id = _next_id("ability")
     body = {
         "id": ability_id,
@@ -119,8 +147,42 @@ def create_ability(trigger, action, note="", confidence=0.6, source="learned:liv
         "evidence_for": 1,
         "status": "active",
     }
+    if supersedes_scar:
+        body["supersedes_scar"] = supersedes_scar
     memory.set_entity("ability", ability_id, body)
     return ability_id
+
+
+def bump_scar_evidence(scar_id, worked_anyway: bool):
+    """Called after an outcome is observed. If the 'dangerous' action actually
+    succeeded under new conditions, count it as evidence against the scar.
+    Two pieces of contradicting evidence flips it to overridden and creates a
+    linked ability. Four pieces archives it out of WARM entirely."""
+    scar = get_scar(scar_id)
+    body = scar["body"]
+
+    if worked_anyway:
+        body["evidence_against"] = body.get("evidence_against", 0) + 1
+
+        if body["evidence_against"] == 2 and body["status"] == "active":
+            body["status"] = "overridden"
+            memory.set_entity("scar", scar_id, body)
+            create_ability(
+                trigger=body["trigger"],
+                action=body["action"],
+                note=f"Supersedes scar {scar_id} - later evidence contradicted the original failure",
+                supersedes_scar=scar_id,
+            )
+            return
+
+        if body["evidence_against"] >= 4 and body["status"] == "overridden":
+            memory.set_entity("scar", scar_id, body)
+            memory.archive_entity("scar", scar_id)
+            return
+    else:
+        body["evidence_for"] = body.get("evidence_for", 0) + 1
+
+    memory.set_entity("scar", scar_id, body)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,8 @@ from memory_client import (
     create_ability,
     get_scar,
     extract_keywords,
+    _find_matching_ability,
+    reinforce_ability,
 )
 
 load_dotenv()
@@ -139,14 +141,17 @@ def try_action_and_learn(situation, action_taken, outcome, root_cause=None, real
     if matched_scar:
         worked_anyway = (outcome == "success")
         bump_scar_evidence(matched_scar["id"], worked_anyway=worked_anyway)
-        updated = get_scar(matched_scar["id"])["body"]
-        print(f"Existing scar [{matched_scar['id']}] evidence updated.")
-        print(f"  evidence_for={updated.get('evidence_for', 0)}  "
-              f"evidence_against={updated.get('evidence_against', 0)}  "
-              f"status={updated['status']}")
-        if updated["status"] == "overridden":
-            print(f"  >>> Scar [{matched_scar['id']}] just flipped to OVERRIDDEN "
-                  f"- new evidence contradicts the old failure.")
+        try:
+            updated = get_scar(matched_scar["id"])["body"]
+            print(f"Existing scar [{matched_scar['id']}] evidence updated.")
+            print(f"  evidence_for={updated.get('evidence_for', 0)}  "
+                  f"evidence_against={updated.get('evidence_against', 0)}  "
+                  f"status={updated['status']}")
+            if updated["status"] == "overridden":
+                print(f"  >>> Scar [{matched_scar['id']}] just flipped to OVERRIDDEN "
+                      f"- new evidence contradicts the old failure, linked ability created.")
+        except Exception:
+            print(f"  >>> Scar [{matched_scar['id']}] was archived - fully retired from WARM.")
     else:
         if outcome == "failure":
             if not root_cause or not real_fix:
@@ -160,12 +165,19 @@ def try_action_and_learn(situation, action_taken, outcome, root_cause=None, real
                 )
                 print(f"  >>> NEW SCAR CREATED: [{scar_id}]")
         else:
-            ability_id = create_ability(
-                trigger=situation,
-                action=action_taken,
-                note=root_cause or "",
-            )
-            print(f"  >>> NEW ABILITY RECORDED: [{ability_id}]")
+            existing = _find_matching_ability(situation, action_taken)
+            if existing:
+                updated = reinforce_ability(existing["id"])
+                print(f"  >>> Existing ability [{existing['id']}] reinforced. "
+                      f"confidence={updated['confidence']:.2f} "
+                      f"evidence_for={updated['evidence_for']}")
+            else:
+                ability_id = create_ability(
+                    trigger=situation,
+                    action=action_taken,
+                    note=root_cause or "",
+                )
+                print(f"  >>> NEW ABILITY RECORDED: [{ability_id}]")
 
     record_decision(situation, f"outcome={outcome}: {action_taken}")
 
