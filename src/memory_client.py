@@ -42,30 +42,33 @@ def get_scar(scar_id):
     return memory.get_entity("scar", scar_id)
 
 
-def find_relevant_scars(query_text):
+def find_relevant_scars(query_text, min_matches=2):
     """Search across all stored scars for ones matching the current situation.
-    Runs one FTS5 query per keyword and merges/dedupes in Python, since the
-    SDK's search_entities has no built-in OR/any-match mode."""
+    Requires at least min_matches overlapping keywords, not just one - a single
+    generic word (e.g. "model", "error") matching by itself was pulling in
+    every scar regardless of actual relevance."""
     keywords = extract_keywords(query_text)
-    seen = {}
+    threshold = min(min_matches, max(1, len(keywords) // 2))
+    match_counts = {}
+    entities = {}
     for kw in keywords:
-        results = memory.search_entities(kw, category="scar")
-        for r in results:
-            seen[r["name"]] = r
-    return list(seen.values())
+        for r in memory.search_entities(kw, category="scar"):
+            match_counts[r["name"]] = match_counts.get(r["name"], 0) + 1
+            entities[r["name"]] = r
+    return [entities[name] for name, count in match_counts.items() if count >= threshold]
 
 
-def find_relevant_abilities(query_text):
-    """Same pattern as find_relevant_scars, but for abilities - the positive
-    half of memory, so it can actually influence a decision instead of just
-    accumulating unused evidence."""
+def find_relevant_abilities(query_text, min_matches=2):
+    """Same logic as find_relevant_scars, for abilities."""
     keywords = extract_keywords(query_text)
-    seen = {}
+    threshold = min(min_matches, max(1, len(keywords) // 2))
+    match_counts = {}
+    entities = {}
     for kw in keywords:
-        results = memory.search_entities(kw, category="ability")
-        for r in results:
-            seen[r["name"]] = r
-    return list(seen.values())
+        for r in memory.search_entities(kw, category="ability"):
+            match_counts[r["name"]] = match_counts.get(r["name"], 0) + 1
+            entities[r["name"]] = r
+    return [entities[name] for name, count in match_counts.items() if count >= threshold]
 
 
 def record_decision(trigger, action_chosen, blocked_scar_id=None):

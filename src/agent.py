@@ -26,6 +26,13 @@ client = Groq(api_key=os.environ["GROQ_API_KEY"])
 MODEL = "openai/gpt-oss-20b"  # confirmed live via client.models.list() - Sep 2026
 
 
+def _mentions_id(text, entity_id):
+    """Some model outputs use a unicode hyphen (e.g. 'scar‑009') instead of a
+    plain ASCII one - normalize both before checking for a substring match."""
+    normalized = text.replace("\u2011", "-").replace("\u2013", "-").replace("\u2010", "-")
+    return entity_id.lower() in normalized.lower()
+
+
 def build_prompt(situation, scars, abilities):
     scar_block = ""
     for s in scars:
@@ -66,18 +73,19 @@ Scars (past failures) relevant to this situation:{scar_block}
 Abilities (past proven successes) relevant to this situation:{ability_block}
 
 Instructions:
-- Only avoid an action if its scar is explicitly marked STILL BLOCKING above. OVERRIDDEN scars are not blocking.
-- If an ABILITY closely matches a reasonable next step, prefer recommending it over inventing a new approach - it has real prior evidence behind it. Name the ability id when you do.
-- If you avoid an action, name the scar id. Do not restate a scar's fix in your own words - it is shown separately from verified memory.
-- If neither scars nor abilities apply, reason normally.
+- Only mention/avoid a scar if it is GENUINELY relevant to the current situation - not every scar shown to you applies. If none are actually relevant, say so and ignore them.
+- If an active scar's failed action closely matches what you would naturally try, explicitly name its scar id and avoid that action.
+- OVERRIDDEN scars are not blocking - you may still consider that action, but mention the past conflict if genuinely relevant.
+- If an ABILITY closely matches a reasonable next step, name its ability id and prefer it.
+- Do not restate a scar's fix in your own words - it is shown separately from verified memory.
 - Be concise: 2-3 sentences max.
 """
 
 
 def handle_situation(situation):
     """Step 1: decide. Retrieves scars AND abilities, asks the model to reason,
-    prints the verified fix pulled directly from memory (never from the model's
-    own text)."""
+    prints the verified fix pulled directly from memory - but ONLY for scars
+    the model's own reasoning actually names, not every scar merely retrieved."""
     scars = find_relevant_scars(situation)
     abilities = find_relevant_abilities(situation)
     prompt = build_prompt(situation, scars, abilities)
@@ -90,12 +98,16 @@ def handle_situation(situation):
     reasoning = response.choices[0].message.content
 
     blocked_scar_ids = [
-        s["body"]["id"] for s in scars if s["body"]["status"] == "active"
+        s["body"]["id"] for s in scars
+        if s["body"]["status"] == "active" and _mentions_id(reasoning, s["body"]["id"])
     ]
     overridden_ids = [
-        s["body"]["id"] for s in scars if s["body"]["status"] == "overridden"
+        s["body"]["id"] for s in scars
+        if s["body"]["status"] == "overridden" and _mentions_id(reasoning, s["body"]["id"])
     ]
-    ability_ids = [a["body"]["id"] for a in abilities]
+    mentioned_ability_ids = [
+        a["body"]["id"] for a in abilities if _mentions_id(reasoning, a["body"]["id"])
+    ]
 
     record_decision(
         trigger=situation,
@@ -106,8 +118,8 @@ def handle_situation(situation):
     print(f"\n{'='*60}")
     print(f"SITUATION: {situation}")
     print(f"{'='*60}")
-    print(f"Scars consulted: {[s['body']['id'] for s in scars] or 'none'}")
-    print(f"Abilities consulted: {ability_ids or 'none'}")
+    print(f"Scars retrieved: {[s['body']['id'] for s in scars] or 'none'}")
+    print(f"Abilities retrieved: {[a['body']['id'] for a in abilities] or 'none'}")
     print(f"\nAGENT REASONING:\n{reasoning}\n")
 
     if blocked_scar_ids:
@@ -117,15 +129,16 @@ def handle_situation(situation):
             print(f"  [{sid}] {scar_body['real_fix']}")
 
     if overridden_ids:
-        print("--- Overridden scars (no longer blocking, evidence contradicted them) ---")
+        print("--- Overridden scars the agent chose to reconsider ---")
         for sid in overridden_ids:
-            print(f"  [{sid}] status changed after new evidence - action may be reconsidered")
+            print(f"  [{sid}] status changed after new evidence - action reconsidered")
 
-    if ability_ids:
-        print("--- Proven abilities available (not model-generated) ---")
+    if mentioned_ability_ids:
+        print("--- Proven abilities the agent relied on (not model-generated) ---")
         for a in abilities:
-            b = a["body"]
-            print(f"  [{b['id']}] {b['action']} (confidence={b.get('confidence', 0):.2f}, evidence={b.get('evidence_for', 0)})")
+            if a["body"]["id"] in mentioned_ability_ids:
+                b = a["body"]
+                print(f"  [{b['id']}] {b['action']} (confidence={b.get('confidence', 0):.2f}, evidence={b.get('evidence_for', 0)})")
 
     return scars, abilities, reasoning
 
@@ -145,10 +158,6 @@ def try_action_and_learn(situation, action_taken, outcome, root_cause=None, real
     """
     Step 2: learn. Call this after actually attempting an action, to let
     the agent update its memory based on what really happened.
-
-    outcome: "success" or "failure"
-    root_cause / real_fix: only needed if this is a genuinely NEW failure
-        (not matching an existing scar) - required to create a full scar.
     """
     scars = find_relevant_scars(situation)
     matched_scar = None
