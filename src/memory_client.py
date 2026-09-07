@@ -55,6 +55,19 @@ def find_relevant_scars(query_text):
     return list(seen.values())
 
 
+def find_relevant_abilities(query_text):
+    """Same pattern as find_relevant_scars, but for abilities - the positive
+    half of memory, so it can actually influence a decision instead of just
+    accumulating unused evidence."""
+    keywords = extract_keywords(query_text)
+    seen = {}
+    for kw in keywords:
+        results = memory.search_entities(kw, category="ability")
+        for r in results:
+            seen[r["name"]] = r
+    return list(seen.values())
+
+
 def record_decision(trigger, action_chosen, blocked_scar_id=None):
     """Write every decision to the COLD journal, always, regardless of outcome."""
     memory.write_event(acted=[{
@@ -119,6 +132,17 @@ def _find_matching_ability(trigger, action_taken):
     return None
 
 
+def _find_ability_by_supersedes(scar_id):
+    """Look up the ability that superseded a given scar, so further
+    contradicting evidence can reinforce that ability too, not just
+    increment the scar's own counter with no corresponding positive signal."""
+    results = memory.search_entities(scar_id, category="ability")
+    for r in results:
+        if r["body"].get("supersedes_scar") == scar_id:
+            return r["body"]["id"]
+    return None
+
+
 def reinforce_ability(ability_id):
     """Bumps confidence and evidence on an existing ability instead of
     creating a duplicate record for the same demonstrated competence."""
@@ -157,7 +181,8 @@ def bump_scar_evidence(scar_id, worked_anyway: bool):
     """Called after an outcome is observed. If the 'dangerous' action actually
     succeeded under new conditions, count it as evidence against the scar.
     Two pieces of contradicting evidence flips it to overridden and creates a
-    linked ability. Four pieces archives it out of WARM entirely."""
+    linked ability. Further contradictions reinforce that linked ability too.
+    Four pieces archives the scar out of WARM entirely."""
     scar = get_scar(scar_id)
     body = scar["body"]
 
@@ -174,6 +199,11 @@ def bump_scar_evidence(scar_id, worked_anyway: bool):
                 supersedes_scar=scar_id,
             )
             return
+
+        if body["status"] == "overridden":
+            linked_ability_id = _find_ability_by_supersedes(scar_id)
+            if linked_ability_id:
+                reinforce_ability(linked_ability_id)
 
         if body["evidence_against"] >= 4 and body["status"] == "overridden":
             memory.set_entity("scar", scar_id, body)
