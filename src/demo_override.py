@@ -3,7 +3,8 @@ Demonstrates the evidence-override mechanic: a scar isn't a permanent ban.
 If the same action later succeeds under different conditions, contradicting
 evidence accumulates, and after enough of it the scar flips to "overridden" -
 the agent can reconsider the action, while still remembering why it was
-once flagged.
+once flagged. The linked ability's confidence should visibly climb with
+each further piece of supporting evidence.
 
 Run with the real db (not the deletion-test one) since this builds on
 scar-009 created in earlier demo runs.
@@ -29,6 +30,13 @@ try_action_and_learn(
 )
 
 print("\n### STEP 3: it works AGAIN under similar conditions - second piece of contradicting evidence ###")
+try_action_and_learn(
+    situation=situation,
+    action_taken="merge using load_in_8bit=True",
+    outcome="success",
+)
+
+print("\n### STEP 3.5: it works a THIRD time - does the linked ability's confidence actually climb? ###")
 try_action_and_learn(
     situation=situation,
     action_taken="merge using load_in_8bit=True",
